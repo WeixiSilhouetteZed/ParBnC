@@ -57,7 +57,6 @@ branchAndBoundSolve x@Problem {problemType = LP, ..} = solveProblem x
 
 -- for simple LP test
 
-
 toTableau :: LA.Vector R -> LA.Matrix R -> LA.Vector R -> LA.Matrix R
 toTableau costC matA constB = tab where 
     xb = LA.fromColumns $ LA.toColumns matA ++ [constB]
@@ -68,9 +67,18 @@ costCheck :: ObjectiveType -> (R -> Bool)
 costCheck Maximization = (> 0)
 costCheck Minimization = (< 0)
 
+boundCheck :: ObjectiveType -> (R -> Bool)
+boundCheck Maximization = (> 0)
+boundCheck Minimization = (< 0)
+
 isImprovable :: ObjectiveType -> LA.Matrix R -> Bool
 isImprovable obj tab = any (costCheck obj) $ LA.toList cost where 
     cost = subVector 0 (cols tab - 1) $ tab ! (rows tab - 1)
+
+isImprovableDual :: ObjectiveType -> LA.Matrix R -> Bool
+isImprovableDual obj tab = any (boundCheck obj) $ LA.toList bounds where 
+    lastCol = last $ LA.toColumns tab
+    bounds = subVector 0 (rows tab - 1) lastCol
 
 getPivotPosition :: ObjectiveType -> LA.Matrix R -> (Int, Int)
 getPivotPosition obj tab = (row, column) where 
@@ -84,6 +92,19 @@ getPivotPosition obj tab = (row, column) where
             elem = rowEq ! column
     restrictions = map getElem $ init (LA.toRows tab)
     Just row =  elemIndex (minimum restrictions) restrictions
+
+getPivotPositionDual :: ObjectiveType -> LA.Matrix R -> (Int, Int)
+getPivotPositionDual obj tab = (row, column) where 
+    lastCol = last $ LA.toColumns tab
+    bounds = subVector 0 (rows tab - 1) lastCol
+    row = head $ LA.find (boundCheck obj) bounds
+    getElem rowEq
+        | elem >= 0 = infinity::R
+        | otherwise = elem / (rowEq ! (LA.size rowEq - 1))
+        where 
+            elem = rowEq ! row
+    restrictions = map getElem $ init (LA.toColumns tab)
+    Just column =  elemIndex (minimum restrictions) restrictions
 
 pivotStep :: Matrix R -> (Int, Int) -> Matrix R
 pivotStep tab (row, column) = newTableau where
@@ -112,14 +133,21 @@ getSolution tab = solution where
     solution = LA.fromList $ map findSol columns
 
 updateTab :: ObjectiveType -> LA.Matrix R -> LA.Matrix R
-updateTab obj subTab
-    | not $ isImprovable obj subTab = subTab
+updateTab obj tab
+    | not $ isImprovable obj tab = tab
     | otherwise = updateTab obj newTab where 
-        pivotPos = getPivotPosition obj subTab
-        newTab = pivotStep subTab pivotPos
+        pivotPos = getPivotPosition obj tab
+        newTab = pivotStep tab pivotPos
 
-simplexWithTab :: ObjectiveType -> LA.Vector R -> LA.Matrix R -> LA.Vector R -> LA.Vector R
-simplexWithTab obj costC matA constB = solution where 
+updateTabDual :: ObjectiveType -> LA.Matrix R -> LA.Matrix R
+updateTabDual obj tab 
+    | not $ isImprovableDual obj tab = tab
+    | otherwise = updateTabDual obj newTab where 
+        pivotPos = getPivotPositionDual obj tab
+        newTab = pivotStep tab pivotPos
+
+simplexWithTab :: ObjectiveType -> LA.Vector R -> LA.Matrix R -> LA.Vector R -> (LA.Vector R, LA.Matrix R)
+simplexWithTab obj costC matA constB = (solution, lastTab) where 
     tab = toTableau costC matA constB       
     lastTab = updateTab obj tab
     solution = getSolution lastTab
@@ -127,10 +155,36 @@ simplexWithTab obj costC matA constB = solution where
 b :: Vector R
 b = LA.fromList [2,4,4::R]
 matA :: Matrix R
-matA = LA.fromLists [[-1,1,1,0,0],[1,0,0,1,0],[0,1,0,0,1::R]]
+matA = LA.fromLists [[-1.5,1,1,0,0],[1.2,0,0,1,0],[0,1.7,0,0,1::R]]
 c :: Vector R
 c = fromList [1,1,0,0,0::R]
 
+oldTab :: Matrix R
+oldTab = toTableau c matA b
+tab :: Matrix R
+z :: Vector R
+(z, tab) = simplexWithTab Minimization (-c) matA b
+newTab :: Matrix R
+newTab = addGomoryCut tab $ getGomoryCut $ tab ! 0
+getGomoryCut :: Vector R -> Vector R
+getGomoryCut rowVec = gomoryCons where
+    [varPart, constPart] = takesV [LA.size rowVec - 1, 1] rowVec 
+    posDec num = -posFrac where
+        (intPart, fracPart) = properFraction num
+        posFrac = if fracPart >= 0.0 then fracPart else 1.0 + fracPart
+    gomoryCons = vjoin [cmap posDec varPart, vector [1::R], cmap posDec constPart]
+
+addGomoryCut :: Matrix R -> Vector R -> Matrix R
+addGomoryCut tab gomoryRow = newTab where 
+    columns = LA.toColumns tab
+    (rowSize, colSize) = LA.size tab
+    (varColumns, lastColumn) = splitAt (colSize - 1) columns
+    zeroVec = LA.konst 0 rowSize
+    extendedTab = varColumns ++ [zeroVec] ++ lastColumn
+    interTab = LA.fromColumns extendedTab
+    rows = LA.toRows interTab
+    (consRows, costRow) = splitAt (rowSize - 1) rows
+    newTab = LA.fromRows (consRows ++ [gomoryRow] ++ costRow)
 
 problemTest :: Problem
 problemTest = Problem { 
