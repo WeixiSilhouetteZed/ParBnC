@@ -36,6 +36,8 @@ data Problem = Problem {
     variableTypes :: [VariableType]
 }
 
+data ObjectiveType = Maximization | Minimization deriving Show
+
 parseConstraints :: MatConstraints -> Constraints
 parseConstraints (MatVec aMatrix bVector) = Dense $ zipWith (:==:) aMatrix bVector
 
@@ -62,15 +64,19 @@ toTableau costC matA constB = tab where
     z = mappend costC $ vector [0]
     tab = LA.fromRows $ LA.toRows xb ++ [z]
 
-isImprovable :: LA.Matrix R -> Bool
-isImprovable tab = any (> 0) $ LA.toList cost where 
+costCheck :: ObjectiveType -> (R -> Bool)
+costCheck Maximization = (> 0)
+costCheck Minimization = (< 0)
+
+isImprovable :: ObjectiveType -> LA.Matrix R -> Bool
+isImprovable obj tab = any (costCheck obj) $ LA.toList cost where 
     cost = subVector 0 (cols tab - 1) $ tab ! (rows tab - 1)
 
-getPivotPosition :: LA.Matrix R -> (Int, Int)
-getPivotPosition tab = (row, column) where 
+getPivotPosition :: ObjectiveType -> LA.Matrix R -> (Int, Int)
+getPivotPosition obj tab = (row, column) where 
     z = tab ! (rows tab - 1)
     cost = subVector 0 (cols tab - 1) z
-    column = head $ LA.find (>0) cost
+    column = head $ LA.find (costCheck obj) cost
     getElem rowEq
         | elem <= 0 = infinity::R
         | otherwise = (rowEq ! (LA.size rowEq - 1)) / elem
@@ -105,17 +111,17 @@ getSolution tab = solution where
             sol = lastCol ! oneIndex
     solution = LA.fromList $ map findSol columns
 
-updateTab :: LA.Matrix R -> LA.Matrix R
-updateTab subTab
-    | not $ isImprovable subTab = subTab
-    | otherwise = updateTab newTab where 
-        pivotPos = getPivotPosition subTab
+updateTab :: ObjectiveType -> LA.Matrix R -> LA.Matrix R
+updateTab obj subTab
+    | not $ isImprovable obj subTab = subTab
+    | otherwise = updateTab obj newTab where 
+        pivotPos = getPivotPosition obj subTab
         newTab = pivotStep subTab pivotPos
 
-simplexWithTab :: LA.Vector R -> LA.Matrix R -> LA.Vector R -> LA.Vector R
-simplexWithTab costC matA constB = solution where 
+simplexWithTab :: ObjectiveType -> LA.Vector R -> LA.Matrix R -> LA.Vector R -> LA.Vector R
+simplexWithTab obj costC matA constB = solution where 
     tab = toTableau costC matA constB       
-    lastTab = updateTab tab
+    lastTab = updateTab obj tab
     solution = getSolution lastTab
 
 b :: Vector R
