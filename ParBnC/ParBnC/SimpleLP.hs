@@ -105,14 +105,16 @@ getSolution tab = solution where
             sol = lastCol ! oneIndex
     solution = LA.fromList $ map findSol columns
 
+updateTab :: LA.Matrix R -> LA.Matrix R
+updateTab subTab
+    | not $ isImprovable subTab = subTab
+    | otherwise = updateTab newTab where 
+        pivotPos = getPivotPosition subTab
+        newTab = pivotStep subTab pivotPos
+
 simplexWithTab :: LA.Vector R -> LA.Matrix R -> LA.Vector R -> LA.Vector R
 simplexWithTab costC matA constB = solution where 
-    tab = toTableau costC matA constB
-    updateTab subTab
-        | isImprovable subTab = subTab
-        | otherwise = updateTab newTab where 
-            pivotPos = getPivotPosition subTab
-            newTab = pivotStep subTab pivotPos
+    tab = toTableau costC matA constB       
     lastTab = updateTab tab
     solution = getSolution lastTab
 
