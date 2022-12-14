@@ -22,7 +22,7 @@ constr1 = Sparse [ [2#1, 1#2, 1#4] :==: 10
 
 data MatConstraints = MatVec [[Double]] [Double] deriving Show
 
-data VariableType = INTEGER | CONTINUOUS deriving Show
+data VariableType = INTEGER | CONTINUOUS deriving (Show, Eq)
 
 data ProblemType = LP | MIP deriving Show
 
@@ -36,7 +36,10 @@ data Problem = Problem {
     variableTypes :: [VariableType]
 }
 
-data ObjectiveType = Maximization | Minimization deriving Show
+data ObjectiveType = Maximization | Minimization deriving (Show, Eq)
+
+epsilonTol :: R
+epsilonTol = 1e-6
 
 parseConstraints :: MatConstraints -> Constraints
 parseConstraints (MatVec aMatrix bVector) = Dense $ zipWith (:==:) aMatrix bVector
@@ -146,11 +149,13 @@ updateTabDual obj tab
         pivotPos = getPivotPositionDual obj tab
         newTab = pivotStep tab pivotPos
 
-simplexWithTab :: ObjectiveType -> LA.Vector R -> LA.Matrix R -> LA.Vector R -> (LA.Vector R, LA.Matrix R)
-simplexWithTab obj costC matA constB = (solution, lastTab) where 
-    tab = toTableau costC matA constB       
+simplexWithTab :: ObjectiveType -> LA.Matrix R -> (R, LA.Vector R, LA.Matrix R)
+simplexWithTab obj tab = (optVal, solution, lastTab) where 
     lastTab = updateTab obj tab
     solution = getSolution lastTab
+    (rowSize, colSize) = LA.size lastTab
+    lastVal = lastTab ! (rowSize - 1) ! (colSize - 1)
+    optVal = if obj == Maximization then lastVal else (-lastVal)
 
 b :: Vector R
 b = LA.fromList [2,4,4::R]
@@ -163,7 +168,9 @@ oldTab :: Matrix R
 oldTab = toTableau c matA b
 tab :: Matrix R
 z :: Vector R
-(z, tab) = simplexWithTab Minimization (-c) matA b
+val :: R
+(val, z, tab) = simplexWithTab Minimization $ toTableau (-c) matA b
+
 newTab :: Matrix R
 newTab = addGomoryCut tab $ getGomoryCut $ tab ! 0
 getGomoryCut :: Vector R -> Vector R
@@ -185,6 +192,50 @@ addGomoryCut tab gomoryRow = newTab where
     rows = LA.toRows interTab
     (consRows, costRow) = splitAt (rowSize - 1) rows
     newTab = LA.fromRows (consRows ++ [gomoryRow] ++ costRow)
+
+performGomoryCut :: ObjectiveType -> LA.Matrix R -> Int -> (R, LA.Vector R, LA.Matrix R)
+performGomoryCut obj tab varIdx = (newVal, newSol, newTab) where 
+    interTab = addGomoryCut tab $ getGomoryCut $ tab ! varIdx 
+    newTab = updateTabDual obj interTab
+    newSol = getSolution newTab
+    (rowSize, colSize) = LA.size newTab
+    lastVal = newTab ! (rowSize - 1) ! (colSize - 1)
+    newVal = if obj == Maximization then lastVal else (-lastVal)
+
+roundSolution :: R -> R
+roundSolution num
+    | diff < epsilonTol = roundCand
+    | otherwise = num where
+        roundCand = fromIntegral $ round num 
+        diff = abs $ roundCand - num
+
+integerSolved :: [Bool] -> [R] -> [Bool]
+integerSolved = zipWith isIntSol where
+    isIntSol False _ = True
+    isIntSol True num = num == fromInteger (round num)
+
+findNonIntIndex :: [Bool] -> [Bool] -> Int
+findNonIntIndex intMask solMask = solIdx where
+    f False sBool = True
+    f True True = True
+    f True False = False
+    Just solIdx = elemIndex False $ zipWith f intMask solMask
+
+fromProblem :: Problem -> (ObjectiveType, LA.Vector R, LA.Matrix R, LA.Vector R, LA.Vector Bool)
+fromProblem x@Problem {objective = Maximize costs, ..} = (obj, costC, matA, constB, continuousMask) where 
+    obj = Maximization
+    MatVec matALists consts = constraints
+    matA = LA.fromLists matALists
+    constB = LA.fromList consts
+    costC = LA.fromList costs 
+    continuousMask = LA.fromList $ map (==CONTINUOUS) variableTypes
+fromProblem x@Problem {objective = Minimize costs, ..} = (obj, costC, matA, constB, continuousMask) where 
+    obj = Minimization
+    MatVec matALists consts = constraints
+    matA = LA.fromLists matALists
+    constB = LA.fromList consts
+    costC = LA.fromList costs 
+    continuousMask = LA.fromList $ map (==CONTINUOUS) variableTypes
 
 problemTest :: Problem
 problemTest = Problem { 
