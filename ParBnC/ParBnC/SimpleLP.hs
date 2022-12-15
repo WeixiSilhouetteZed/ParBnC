@@ -158,18 +158,18 @@ simplexWithTab obj tab = (optVal, solution, lastTab) where
     optVal = if obj == Maximization then lastVal else (-lastVal)
 
 b :: Vector R
-b = LA.fromList [2,4,4::R]
+b = LA.fromList [5,28::R]
 matA :: Matrix R
-matA = LA.fromLists [[-1.5,1,1,0,0],[1.2,0,0,1,0],[0,1.7,0,0,1::R]]
+matA = LA.fromLists [[1,1,1,0],[4,7,0,1::R]]
 c :: Vector R
-c = fromList [1,1,0,0,0::R]
+c = fromList [5,6,0,0::R]
 
 oldTab :: Matrix R
 oldTab = toTableau c matA b
 tab :: Matrix R
 z :: Vector R
 val :: R
-(val, z, tab) = simplexWithTab Minimization $ toTableau (-c) matA b
+(val, z, tab) = simplexWithTab Maximization $ toTableau c matA b
 
 newTab :: Matrix R
 newTab = addGomoryCut tab $ getGomoryCut $ tab ! 0
@@ -181,14 +181,26 @@ getGomoryCut rowVec = gomoryCons where
         posFrac = if fracPart >= 0.0 then fracPart else 1.0 + fracPart
     gomoryCons = vjoin [cmap posDec varPart, vector [1::R], cmap posDec constPart]
 
-addGomoryCut :: Matrix R -> Vector R -> Matrix R
-addGomoryCut tab gomoryRow = newTab where 
+addSlackColumn :: Matrix R -> Matrix R
+addSlackColumn tab = newTab where
     columns = LA.toColumns tab
     (rowSize, colSize) = LA.size tab
     (varColumns, lastColumn) = splitAt (colSize - 1) columns
-    zeroVec = LA.konst 0 rowSize
+    zeroVec = LA.konst 0 rowSize :: Vector R
     extendedTab = varColumns ++ [zeroVec] ++ lastColumn
-    interTab = LA.fromColumns extendedTab
+    newTab = LA.fromColumns extendedTab
+
+addNewRow :: Matrix R -> Vector R -> Matrix R
+addNewRow tab newRow = newTab where
+    rows = LA.toRows tab
+    (rowSize, colSize) = LA.size tab
+    (constRows, lastRow) = splitAt (rowSize - 1) rows
+    newTab = LA.fromRows $ constRows ++ [newRow] ++ lastRow
+
+addGomoryCut :: Matrix R -> Vector R -> Matrix R
+addGomoryCut tab gomoryRow = newTab where 
+    (rowSize, colSize) = LA.size tab
+    interTab = addSlackColumn tab
     rows = LA.toRows interTab
     (consRows, costRow) = splitAt (rowSize - 1) rows
     newTab = LA.fromRows (consRows ++ [gomoryRow] ++ costRow)
@@ -220,6 +232,26 @@ findNonIntIndex intMask solMask = solIdx where
     f True True = True
     f True False = False
     Just solIdx = elemIndex False $ zipWith f intMask solMask
+
+getBranches :: Matrix R -> Vector R -> Int -> (Matrix R, Matrix R)
+getBranches tab solVec branchIdx = (leftTab, rightTab) where
+    currSolVal = solVec ! branchIdx
+    colSize = LA.cols tab
+    baseVec = LA.vjoin [LA.konst 0 branchIdx :: Vector R, vector [1::R], LA.konst (0::R) (colSize - branchIdx - 2)]
+
+    leftBound = fromIntegral $ floor currSolVal
+    leftRow = LA.vjoin [baseVec, vector [1::R, leftBound]]
+    rightBound = fromIntegral $ ceiling currSolVal
+    rightRow = LA.vjoin [-baseVec, vector [1::R, -rightBound]]
+
+    slackTab = addSlackColumn tab
+    leftTab = addNewRow slackTab leftRow 
+
+    mixPivotPos = (LA.rows tab - 1, branchIdx)
+    rightTab = pivotStep (addNewRow slackTab rightRow) mixPivotPos
+
+-- branchAndBound :: ObjectiveType -> Matrix R -> Vector R -> R -> (R, Vector R, Matrix R)
+
 
 fromProblem :: Problem -> (ObjectiveType, LA.Vector R, LA.Matrix R, LA.Vector R, LA.Vector Bool)
 fromProblem x@Problem {objective = Maximize costs, ..} = (obj, costC, matA, constB, continuousMask) where 
