@@ -250,11 +250,12 @@ getBranches tab solVec branchIdx = (leftTab, rightTab) where
     mixPivotPos = (LA.rows tab - 1, branchIdx)
     rightTab = pivotStep (addNewRow slackTab rightRow) mixPivotPos
 
-branchAndBound :: ObjectiveType -> Matrix R -> Vector R -> R -> (R, Vector R, Matrix R)
-branchAndBound Minimization tab costVec optimalVal = (newOptimalVal, newSol, newTab) where 
-    newOptimalVal = 0::R
-    newSol = vector [1..4::R]
-    newTab = matrix 1 [1]
+branchAndBound :: ObjectiveType -> Matrix R -> Vector Bool -> Vector R -> R -> (R, Vector R, Matrix R)
+branchAndBound Minimization tab intMask costVec optimalVal = (newOptimalVal, newSol, newTab) where 
+    currSol = getSolution tab
+    (newOptimalVal, newSol, newTab)
+        | and $ integerSolved (LA.toList intMask) (LA.toList currSol) = (optimalVal, currSol, tab)
+        | otherwise = (0::R, vector [1..4::R], matrix 1 [1])
 
 fromProblem :: Problem -> (ObjectiveType, LA.Vector R, LA.Matrix R, LA.Vector R, LA.Vector Bool)
 fromProblem x@Problem {objective = Maximize costs, ..} = (obj, costC, matA, constB, continuousMask) where 
