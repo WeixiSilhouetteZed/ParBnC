@@ -41,6 +41,9 @@ data ObjectiveType = Maximization | Minimization deriving (Show, Eq)
 epsilonTol :: R
 epsilonTol = 1e-6
 
+isInt :: (RealFrac a) => a -> Bool
+isInt x = x == fromInteger (round x)
+
 parseConstraints :: MatConstraints -> Constraints
 parseConstraints (MatVec aMatrix bVector) = Dense $ zipWith (:==:) aMatrix bVector
 
@@ -228,7 +231,7 @@ integerSolved = zipWith isIntSol where
 
 findNonIntIndex :: [Bool] -> [Bool] -> Int
 findNonIntIndex intMask solMask = solIdx where
-    f False sBool = True
+    f False solBool = True
     f True True = True
     f True False = False
     Just solIdx = elemIndex False $ zipWith f intMask solMask
@@ -245,17 +248,42 @@ getBranches tab solVec branchIdx = (leftTab, rightTab) where
     rightRow = LA.vjoin [-baseVec, vector [1::R, -rightBound]]
 
     slackTab = addSlackColumn tab
-    leftTab = addNewRow slackTab leftRow 
+    leftTab = addNewRow slackTab leftRow
 
     mixPivotPos = (LA.rows tab - 1, branchIdx)
     rightTab = pivotStep (addNewRow slackTab rightRow) mixPivotPos
 
-branchAndBound :: ObjectiveType -> Matrix R -> Vector Bool -> Vector R -> R -> (R, Vector R, Matrix R)
-branchAndBound Minimization tab intMask costVec optimalVal = (newOptimalVal, newSol, newTab) where 
-    currSol = getSolution tab
-    (newOptimalVal, newSol, newTab)
-        | and $ integerSolved (LA.toList intMask) (LA.toList currSol) = (optimalVal, currSol, tab)
-        | otherwise = (0::R, vector [1..4::R], matrix 1 [1])
+data Tree a = Nil | Node a (Tree a) (Tree a) deriving (Show)
+
+data BranchProblem = BranchProblem {
+    tableau :: Matrix R,
+    solution :: Vector R,
+    value :: R
+} deriving (Show)
+
+constructBranchAndBound :: ObjectiveType -> Matrix R -> Vector Bool -> Vector R -> Tree BranchProblem
+constructBranchAndBound obj tab intMask costVec
+    | and $ integerSolved intList currList = currProb Nil Nil
+    | otherwise = currProb leftTree rightTree where
+        (y, currSol, newTab) = simplexWithTab obj tab
+        candVal = costVec <.> LA.subVector 0 (LA.size costVec) currSol 
+        currProb = Node BranchProblem {
+            tableau = tab, solution = currSol, value = candVal
+        }
+        intList = LA.toList intMask 
+        currList = LA.toList currSol
+        solMask =  map (isInt . roundSolution) $ LA.toList currSol
+        nextIdx = findNonIntIndex intList solMask
+        (leftTab, rightTab) = getBranches tab currSol nextIdx
+        leftTree = constructBranchAndBound obj leftTab intMask costVec
+        rightTree = constructBranchAndBound obj rightTab intMask costVec
+
+-- pruneBranchAndBound :: ObjectiveType -> Tree BranchProblem -> BranchProblem -> R -> Tree BranchProblem
+-- pruneBranchAndBound Minimization (Node currProb Nil Nil) baseVal
+--     | currProb.value < baseVal = Nil
+--     | otherwise = (Node currProb Nil Nil)
+-- pruneBranchAndBound Minimization (Node currProb leftProb rightProb) baseVal
+--     | currProb.value > baseVal = 
 
 fromProblem :: Problem -> (ObjectiveType, LA.Vector R, LA.Matrix R, LA.Vector R, LA.Vector Bool)
 fromProblem x@Problem {objective = Maximize costs, ..} = (obj, costC, matA, constB, continuousMask) where 
