@@ -97,8 +97,9 @@ getPivotPosition obj tab = (row, column) where
         where 
             elem = rowEq ! column
     restrictions = map getElem $ init (LA.toRows tab)
-    Just row =  elemIndex (minimum restrictions) restrictions
 
+    Just row =  elemIndex (minimum restrictions) restrictions
+    
 getPivotPositionDual :: ObjectiveType -> LA.Matrix R -> (Int, Int)
 getPivotPositionDual obj tab = (row, column) where 
     lastCol = last $ LA.toColumns tab
@@ -152,6 +153,45 @@ updateTabDual obj tab
         pivotPos = getPivotPositionDual obj tab
         newTab = pivotStep tab pivotPos
 
+isMixed :: LA.Matrix R -> Bool
+isMixed tab = any (< 0) $ LA.toList bounds where
+    lastCol = last $ LA.toColumns tab
+    bounds = subVector 0 (rows tab - 1) lastCol
+
+getPhaseOneTab :: LA.Matrix R -> (LA.Matrix R, LA.Vector R, Bool)
+getPhaseOneTab tab = (newTab, oldCost, needed) where 
+    (rowSize, colSize) = LA.size tab
+    (constRows, [oldCost]) = splitAt (rowSize - 1) $ LA.toRows tab
+    updateRow rowVec
+        | boundVal < 0 = -rowVec
+        | otherwise = rowVec where 
+            boundVal = last $ LA.toList rowVec
+    zeroRow = LA.konst (0::R) colSize
+    mixedRows = filter (\rowVec -> (rowVec ! (LA.size rowVec - 1)) < 0) constRows
+    needed = not $ null mixedRows
+    sumRow = sum $ map (\x -> -x) $ mixedRows ++ [zeroRow]
+    newConstRows = map updateRow constRows
+    newTab = LA.fromRows $ newConstRows ++ [sumRow]
+
+getPivotPositionMixed :: LA.Matrix R -> (Int, Int)
+getPivotPositionMixed tab = (row, column) where 
+    z = tab ! (rows tab - 1)
+    cost = subVector 0 (cols tab - 1) z
+    maxCost = LA.maxElement cost
+    column = head $ LA.find (== maxCost) cost
+    getElem rowEq
+        | elem <= 0 = infinity::R
+        | otherwise = (rowEq ! (LA.size rowEq - 1)) / elem
+        where 
+            elem = rowEq ! column
+    restrictions = map getElem $ init (LA.toRows tab)
+    Just row =  elemIndex (minimum restrictions) restrictions
+
+updateMixedTab :: LA.Matrix R -> LA.Matrix R
+updateMixedTab tab = newTab where
+    pivotPos = getPivotPositionMixed tab
+    newTab = pivotStep tab pivotPos
+    
 simplexWithTab :: ObjectiveType -> LA.Matrix R -> (R, LA.Vector R, LA.Matrix R)
 simplexWithTab obj tab = (optVal, solution, lastTab) where 
     lastTab = updateTab obj tab
@@ -159,6 +199,21 @@ simplexWithTab obj tab = (optVal, solution, lastTab) where
     (rowSize, colSize) = LA.size lastTab
     lastVal = lastTab ! (rowSize - 1) ! (colSize - 1)
     optVal = if obj == Maximization then lastVal else (-lastVal)
+
+simplexWithMixedTab :: ObjectiveType -> LA.Matrix R -> (R, LA.Vector R, LA.Matrix R)
+simplexWithMixedTab obj tab = (lastVal, solution, lastTab) where
+    (phaseOneTab, oldCost, needed) = getPhaseOneTab tab
+    interTab
+        | needed = updateMixedTab phaseOneTab
+        | otherwise = phaseOneTab
+    (rowSize, colSize) = LA.size interTab
+    (constRows, _) = splitAt (rowSize - 1) $ LA.toRows interTab
+
+    phastTwoTab = LA.fromRows $ constRows ++ [oldCost]
+    lastTab = updateTab obj phastTwoTab
+    solution = getSolution lastTab
+    lastVal = lastTab ! (rowSize - 1) ! (colSize - 1)
+    optVal = lastVal
 
 b :: Vector R
 b = LA.fromList [5,28::R]
@@ -249,9 +304,7 @@ getBranches tab solVec branchIdx = (leftTab, rightTab) where
 
     slackTab = addSlackColumn tab
     leftTab = addNewRow slackTab leftRow
-
-    mixPivotPos = (LA.rows tab - 1, branchIdx)
-    rightTab = pivotStep (addNewRow slackTab rightRow) mixPivotPos
+    rightTab = addNewRow slackTab rightRow
 
 data Tree a = Nil | Node a (Tree a) (Tree a) deriving (Show)
 
@@ -265,7 +318,7 @@ constructBranchAndBound :: ObjectiveType -> Matrix R -> Vector Bool -> Vector R 
 constructBranchAndBound obj tab intMask costVec
     | and $ integerSolved intList currList = currProb Nil Nil
     | otherwise = currProb leftTree rightTree where
-        (y, currSol, newTab) = simplexWithTab obj tab
+        (y, currSol, newTab) = simplexWithMixedTab obj tab
         candVal = costVec <.> LA.subVector 0 (LA.size costVec) currSol 
         currProb = Node BranchProblem {
             tableau = tab, solution = currSol, value = candVal
