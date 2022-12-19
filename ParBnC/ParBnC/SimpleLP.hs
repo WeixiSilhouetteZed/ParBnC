@@ -90,7 +90,7 @@ getPivotPosition :: ObjectiveType -> LA.Matrix R -> (Int, Int)
 getPivotPosition obj tab = (row, column) where 
     z = tab ! (rows tab - 1)
     cost = subVector 0 (cols tab - 1) z
-    column = head $ LA.find (costCheck obj) cost
+    column = LA.maxIndex cost
     getElem rowEq
         | elem <= 0 = infinity::R
         | otherwise = (rowEq ! (LA.size rowEq - 1)) / elem
@@ -153,10 +153,10 @@ updateTabDual obj tab
         pivotPos = getPivotPositionDual obj tab
         newTab = pivotStep tab pivotPos
 
-isMixed :: LA.Matrix R -> Bool
-isMixed tab = any (< 0) $ LA.toList bounds where
-    lastCol = last $ LA.toColumns tab
-    bounds = subVector 0 (rows tab - 1) lastCol
+isImprovableMixed :: LA.Matrix R -> Bool
+isImprovableMixed tab = any (> 0) $ LA.toList costs where
+    lastRow = last $ LA.toRows tab
+    costs = subVector 0 (LA.cols tab - 1) lastRow
 
 getPhaseOneTab :: LA.Matrix R -> (LA.Matrix R, LA.Vector R, Bool)
 getPhaseOneTab tab = (newTab, oldCost, needed) where 
@@ -176,21 +176,27 @@ getPhaseOneTab tab = (newTab, oldCost, needed) where
 getPivotPositionMixed :: LA.Matrix R -> (Int, Int)
 getPivotPositionMixed tab = (row, column) where 
     z = tab ! (rows tab - 1)
-    cost = subVector 0 (cols tab - 1) z
+    colSize = cols tab - 1
+    cost = subVector 0 colSize z
     maxCost = LA.maxElement cost
     column = head $ LA.find (== maxCost) cost
     getElem rowEq
-        | elem <= 0 = infinity::R
-        | otherwise = (rowEq ! (LA.size rowEq - 1)) / elem
+        | elem == 0 = infinity::R
+        | val < 0 = infinity::R
+        | otherwise = val
         where 
             elem = rowEq ! column
+            val = (rowEq ! (LA.size rowEq - 1)) / (rowEq ! column)
     restrictions = map getElem $ init (LA.toRows tab)
-    Just row =  elemIndex (minimum restrictions) restrictions
+    minRatio = minimum restrictions
+    row =  last [idx | (idx, ratio) <- zip [0..colSize] restrictions, ratio == minRatio]
 
 updateMixedTab :: LA.Matrix R -> LA.Matrix R
-updateMixedTab tab = newTab where
-    pivotPos = getPivotPositionMixed tab
-    newTab = pivotStep tab pivotPos
+updateMixedTab tab
+    | not $ isImprovableMixed tab = tab
+    | otherwise = updateMixedTab newTab where 
+        pivotPos = getPivotPositionMixed tab
+        newTab = pivotStep tab pivotPos
     
 simplexWithTab :: ObjectiveType -> LA.Matrix R -> (R, LA.Vector R, LA.Matrix R)
 simplexWithTab obj tab = (optVal, solution, lastTab) where 
@@ -201,7 +207,7 @@ simplexWithTab obj tab = (optVal, solution, lastTab) where
     optVal = if obj == Maximization then lastVal else (-lastVal)
 
 simplexWithMixedTab :: ObjectiveType -> LA.Matrix R -> (R, LA.Vector R, LA.Matrix R)
-simplexWithMixedTab obj tab = (lastVal, solution, lastTab) where
+simplexWithMixedTab obj tab = (lastVal, solution, phaseTwoTab) where
     (phaseOneTab, oldCost, needed) = getPhaseOneTab tab
     interTab
         | needed = updateMixedTab phaseOneTab
@@ -209,8 +215,8 @@ simplexWithMixedTab obj tab = (lastVal, solution, lastTab) where
     (rowSize, colSize) = LA.size interTab
     (constRows, _) = splitAt (rowSize - 1) $ LA.toRows interTab
 
-    phastTwoTab = LA.fromRows $ constRows ++ [oldCost]
-    lastTab = updateTab obj phastTwoTab
+    phaseTwoTab = LA.fromRows $ constRows ++ [oldCost]
+    lastTab = updateTab obj phaseTwoTab
     solution = getSolution lastTab
     lastVal = lastTab ! (rowSize - 1) ! (colSize - 1)
     optVal = lastVal
@@ -309,7 +315,7 @@ getBranches tab solVec branchIdx = (leftTab, rightTab) where
 data Tree a = Nil | Node a (Tree a) (Tree a) deriving (Show)
 
 data BranchProblem = BranchProblem {
-    tableau :: Matrix R,
+    -- tableau :: Matrix R,
     solution :: Vector R,
     value :: R
 } deriving (Show)
@@ -321,7 +327,7 @@ constructBranchAndBound obj tab intMask costVec
         (y, currSol, newTab) = simplexWithMixedTab obj tab
         candVal = costVec <.> LA.subVector 0 (LA.size costVec) currSol 
         currProb = Node BranchProblem {
-            tableau = tab, solution = currSol, value = candVal
+           solution = currSol, value = candVal
         }
         intList = LA.toList intMask 
         currList = LA.toList currSol
@@ -331,12 +337,8 @@ constructBranchAndBound obj tab intMask costVec
         leftTree = constructBranchAndBound obj leftTab intMask costVec
         rightTree = constructBranchAndBound obj rightTab intMask costVec
 
--- pruneBranchAndBound :: ObjectiveType -> Tree BranchProblem -> BranchProblem -> R -> Tree BranchProblem
--- pruneBranchAndBound Minimization (Node currProb Nil Nil) baseVal
---     | currProb.value < baseVal = Nil
---     | otherwise = (Node currProb Nil Nil)
--- pruneBranchAndBound Minimization (Node currProb leftProb rightProb) baseVal
---     | currProb.value > baseVal = 
+-- searchBBTree :: Tree BranchProblem -> BranchProblem
+-- searchBBTree 
 
 fromProblem :: Problem -> (ObjectiveType, LA.Vector R, LA.Matrix R, LA.Vector R, LA.Vector Bool)
 fromProblem x@Problem {objective = Maximize costs, ..} = (obj, costC, matA, constB, continuousMask) where 
