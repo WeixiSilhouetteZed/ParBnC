@@ -317,6 +317,29 @@ constructBranchAndBound obj tab intMask costVec
         leftTree = constructBranchAndBound obj leftTab intMask costVec
         rightTree = constructBranchAndBound obj rightTab intMask costVec
 
+constructParBranchAndBound :: ObjectiveType -> Matrix R -> Vector Bool -> Vector R -> Tree BranchProblem
+constructParBranchAndBound obj tab intMask costVec
+    | infeasible = Nil
+    | and $ integerSolved intList currList = currProb Nil Nil
+    | otherwise = currProb leftTree rightTree where
+        (y, currSol, newTab) = simplexWithMixedTab obj tab
+        infeasible = y == (-infinity)
+        candVal = costVec <.> LA.subVector 0 (LA.size costVec) currSol 
+        currProb = Node BranchProblem {
+           tableau = tab, solution = currSol, value = candVal
+        }
+        intList = LA.toList intMask 
+        currList = LA.toList currSol
+        solMask =  map (isInt . roundSolution) $ LA.toList currSol
+        nextIdx = findNonIntIndex intList solMask
+        (leftTab, rightTab) = getBranches tab currSol nextIdx
+        (leftTree, rightTree) = runEval $ do
+            leftTree <- rpar $ constructParBranchAndBound obj leftTab intMask costVec
+            rightTree <- rpar $ constructParBranchAndBound obj rightTab intMask costVec
+            _ <- rseq leftTree
+            _ <- rseq rightTree
+            return (leftTree, rightTree)
+
 constructBranchAndCut :: ObjectiveType -> Matrix R -> Vector Bool -> Vector R -> Tree BranchProblem
 constructBranchAndCut obj tab intMask costVec
     | infeasible = Nil
@@ -355,10 +378,10 @@ constructParBranchAndCut obj tab intMask costVec
         cutTab = addGomoryCut tab $ getGomoryCut $ newTab ! nextIdx
         (leftTab, rightTab) = getBranches cutTab currSol nextIdx
         (leftTree, rightTree) = runEval $ do
-            leftTree <- rpar $ constructBranchAndCut obj leftTab intMask costVec
-            rightTree <- rseq $ constructBranchAndCut obj rightTab intMask costVec
-            -- _ <- rseq leftTree
-            -- _ <- rseq rightTree
+            leftTree <- rpar $ constructParBranchAndCut obj leftTab intMask costVec
+            rightTree <- rpar $ constructParBranchAndCut obj rightTab intMask costVec
+            _ <- rseq leftTree
+            _ <- rseq rightTree
             return (leftTree, rightTree)
 
 searchBBTreeMax :: Tree BranchProblem -> BranchProblem
