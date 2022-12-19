@@ -1,41 +1,15 @@
-{-# LANGUAGE RecordWildCards #-}
--- import Numeric.LinearProgramming
---     ( (#),
---       simplex,
---       Bound((:==:)),
---       Constraints(Sparse, Dense),
---       Optimization(Maximize, Minimize),
---       Solution, Bounds, Bound( (:&:) ))
+
 import Numeric.IEEE ( IEEE(infinity) )
 import Data.List
 import Numeric.LinearAlgebra as LA
 import Control.Parallel(par, pseq)
-
--- prob :: Optimization
--- prob = Maximize [4, -3, 2, 0, 0]
-
--- constr1 :: Constraints
--- constr1 = Sparse [ [2#1, 1#2, 1#4] :==: 10
---                  , [1#2, 5#3, 1#5] :==: 20
---                  ]
-
--- simplex prob constr1 []
+import Control.Parallel.Strategies
 
 data MatConstraints = MatVec [[Double]] [Double] deriving Show
 
 data VariableType = INTEGER | CONTINUOUS deriving (Show, Eq)
 
 data ProblemType = LP | MIP deriving Show
-
--- data Problem = Problem { 
---     problemType :: ProblemType,
---     variables :: [String],
---     objective :: Optimization,
---     constraints :: MatConstraints,
---     lowerBounds :: [Double],
---     upperBounds :: [Double],
---     variableTypes :: [VariableType]
--- }
 
 data ObjectiveType = Maximization | Minimization deriving (Show, Eq)
 
@@ -44,25 +18,6 @@ epsilonTol = 1e-6
 
 isInt :: (RealFrac a) => a -> Bool
 isInt x = x == fromInteger (round x)
-
--- parseConstraints :: MatConstraints -> Constraints
--- parseConstraints (MatVec aMatrix bVector) = Dense $ zipWith (:==:) aMatrix bVector
-
--- parseBounds :: [Double] -> [Double] -> Bounds
--- parseBounds lowerBounds upperBounds = zipWith3 f index lowerBounds upperBounds where
---     n = length lowerBounds
---     index = [1 .. n]
---     f x y z = x :&: (y, z)
-
--- solveProblem :: Problem -> Solution
--- solveProblem Problem {..} = simplex objective constr bnd where
---     constr = parseConstraints constraints
---     bnd = parseBounds lowerBounds upperBounds
-
--- branchAndBoundSolve :: Problem -> Solution
--- branchAndBoundSolve x@Problem {problemType = LP, ..} = solveProblem x
-
--- for simple LP test
 
 toTableau :: LA.Vector R -> LA.Matrix R -> LA.Vector R -> LA.Matrix R
 toTableau costC matA constB = tab where 
@@ -382,6 +337,30 @@ constructBranchAndCut obj tab intMask costVec
         leftTree = constructBranchAndCut obj leftTab intMask costVec
         rightTree = constructBranchAndCut obj rightTab intMask costVec
 
+constructParBranchAndCut :: ObjectiveType -> Matrix R -> Vector Bool -> Vector R -> Tree BranchProblem
+constructParBranchAndCut obj tab intMask costVec
+    | infeasible = Nil
+    | and $ integerSolved intList currList = currProb Nil Nil
+    | otherwise = currProb leftTree rightTree where
+        (y, currSol, newTab) = simplexWithMixedTab obj tab
+        infeasible = y == (-infinity)
+        candVal = costVec <.> LA.subVector 0 (LA.size costVec) currSol 
+        currProb = Node BranchProblem {
+           tableau = tab, solution = currSol, value = candVal
+        }
+        intList = LA.toList intMask 
+        currList = map roundSolution $ LA.toList currSol
+        solMask =  map (isInt . roundSolution) $ LA.toList currSol
+        nextIdx = findNonIntIndex intList solMask
+        cutTab = addGomoryCut tab $ getGomoryCut $ newTab ! nextIdx
+        (leftTab, rightTab) = getBranches cutTab currSol nextIdx
+        (leftTree, rightTree) = runEval $ do
+            leftTree <- rpar $ constructBranchAndCut obj leftTab intMask costVec
+            rightTree <- rpar $ constructBranchAndCut obj rightTab intMask costVec
+            _ <- rseq leftTree
+            _ <- rseq rightTree
+            return (leftTree, rightTree)
+
 searchBBTreeMax :: Tree BranchProblem -> BranchProblem
 searchBBTreeMax Nil = BranchProblem{tableau = LA.fromLists [[]], solution = LA.fromList [], value = -infinity}
 searchBBTreeMax (Node bp Nil Nil) = bp
@@ -401,33 +380,6 @@ branchAndBound obj tab intMask costVec = searchBBTreeMax $ constructBranchAndBou
 branchAndCut :: ObjectiveType -> Matrix R -> Vector Bool -> Vector R -> BranchProblem
 branchAndCut obj tab intMask costVec = searchBBTreeMax $ constructBranchAndCut obj tab intMask costVec
 
-
--- fromProblem :: Problem -> (ObjectiveType, LA.Vector R, LA.Matrix R, LA.Vector R, LA.Vector Bool)
--- fromProblem x@Problem {objective = Maximize costs, ..} = (obj, costC, matA, constB, continuousMask) where 
---     obj = Maximization
---     MatVec matALists consts = constraints
---     matA = LA.fromLists matALists
---     constB = LA.fromList consts
---     costC = LA.fromList costs 
---     continuousMask = LA.fromList $ map (==CONTINUOUS) variableTypes
--- fromProblem x@Problem {objective = Minimize costs, ..} = (obj, costC, matA, constB, continuousMask) where 
---     obj = Minimization
---     MatVec matALists consts = constraints
---     matA = LA.fromLists matALists
---     constB = LA.fromList consts
---     costC = LA.fromList costs 
---     continuousMask = LA.fromList $ map (==CONTINUOUS) variableTypes
-
--- problemTest :: Problem
--- problemTest = Problem { 
---     problemType = LP,
---     variables = [" "],
---     objective = Maximize [4, -3, 2, 0, 0],
---     constraints = MatVec [[2,1,0,1,0],[0,1,5,0,1]] [10,20],
---     lowerBounds = [0,0,0,0,0],
---     upperBounds = [100,100,100,100,100],
---     variableTypes = [CONTINUOUS| _ <- [0..5]]
--- }
 obj :: ObjectiveType
 obj = Maximization
 intMask :: Vector Bool
@@ -435,6 +387,6 @@ intMask = LA.fromList [True, True]
 costVec :: Vector R
 costVec = c
 xTree :: BranchProblem
-xTree = branchAndCut obj oldTab intMask costVec
+xTree = searchBBTreeMax $ constructParBranchAndCut obj oldTab intMask costVec
 main :: IO()
-main = print(xTree)
+main = print xTree
