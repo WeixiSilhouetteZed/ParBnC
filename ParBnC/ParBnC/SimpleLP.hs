@@ -356,9 +356,9 @@ constructParBranchAndCut obj tab intMask costVec
         (leftTab, rightTab) = getBranches cutTab currSol nextIdx
         (leftTree, rightTree) = runEval $ do
             leftTree <- rpar $ constructBranchAndCut obj leftTab intMask costVec
-            rightTree <- rpar $ constructBranchAndCut obj rightTab intMask costVec
-            _ <- rseq leftTree
-            _ <- rseq rightTree
+            rightTree <- rseq $ constructBranchAndCut obj rightTab intMask costVec
+            -- _ <- rseq leftTree
+            -- _ <- rseq rightTree
             return (leftTree, rightTree)
 
 searchBBTreeMax :: Tree BranchProblem -> BranchProblem
