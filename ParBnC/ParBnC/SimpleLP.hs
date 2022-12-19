@@ -1,23 +1,23 @@
 {-# LANGUAGE RecordWildCards #-}
-import Numeric.LinearProgramming
-    ( (#),
-      simplex,
-      Bound((:==:)),
-      Constraints(Sparse, Dense),
-      Optimization(Maximize, Minimize),
-      Solution, Bounds, Bound( (:&:) ))
+-- import Numeric.LinearProgramming
+--     ( (#),
+--       simplex,
+--       Bound((:==:)),
+--       Constraints(Sparse, Dense),
+--       Optimization(Maximize, Minimize),
+--       Solution, Bounds, Bound( (:&:) ))
 import Numeric.IEEE ( IEEE(infinity) )
 import Data.List
 import Numeric.LinearAlgebra as LA
 import Control.Parallel(par, pseq)
 
-prob :: Optimization
-prob = Maximize [4, -3, 2, 0, 0]
+-- prob :: Optimization
+-- prob = Maximize [4, -3, 2, 0, 0]
 
-constr1 :: Constraints
-constr1 = Sparse [ [2#1, 1#2, 1#4] :==: 10
-                 , [1#2, 5#3, 1#5] :==: 20
-                 ]
+-- constr1 :: Constraints
+-- constr1 = Sparse [ [2#1, 1#2, 1#4] :==: 10
+--                  , [1#2, 5#3, 1#5] :==: 20
+--                  ]
 
 -- simplex prob constr1 []
 
@@ -27,15 +27,15 @@ data VariableType = INTEGER | CONTINUOUS deriving (Show, Eq)
 
 data ProblemType = LP | MIP deriving Show
 
-data Problem = Problem { 
-    problemType :: ProblemType,
-    variables :: [String],
-    objective :: Optimization,
-    constraints :: MatConstraints,
-    lowerBounds :: [Double],
-    upperBounds :: [Double],
-    variableTypes :: [VariableType]
-}
+-- data Problem = Problem { 
+--     problemType :: ProblemType,
+--     variables :: [String],
+--     objective :: Optimization,
+--     constraints :: MatConstraints,
+--     lowerBounds :: [Double],
+--     upperBounds :: [Double],
+--     variableTypes :: [VariableType]
+-- }
 
 data ObjectiveType = Maximization | Minimization deriving (Show, Eq)
 
@@ -45,22 +45,22 @@ epsilonTol = 1e-6
 isInt :: (RealFrac a) => a -> Bool
 isInt x = x == fromInteger (round x)
 
-parseConstraints :: MatConstraints -> Constraints
-parseConstraints (MatVec aMatrix bVector) = Dense $ zipWith (:==:) aMatrix bVector
+-- parseConstraints :: MatConstraints -> Constraints
+-- parseConstraints (MatVec aMatrix bVector) = Dense $ zipWith (:==:) aMatrix bVector
 
-parseBounds :: [Double] -> [Double] -> Bounds
-parseBounds lowerBounds upperBounds = zipWith3 f index lowerBounds upperBounds where
-    n = length lowerBounds
-    index = [1 .. n]
-    f x y z = x :&: (y, z)
+-- parseBounds :: [Double] -> [Double] -> Bounds
+-- parseBounds lowerBounds upperBounds = zipWith3 f index lowerBounds upperBounds where
+--     n = length lowerBounds
+--     index = [1 .. n]
+--     f x y z = x :&: (y, z)
 
-solveProblem :: Problem -> Solution
-solveProblem Problem {..} = simplex objective constr bnd where
-    constr = parseConstraints constraints
-    bnd = parseBounds lowerBounds upperBounds
+-- solveProblem :: Problem -> Solution
+-- solveProblem Problem {..} = simplex objective constr bnd where
+--     constr = parseConstraints constraints
+--     bnd = parseBounds lowerBounds upperBounds
 
-branchAndBoundSolve :: Problem -> Solution
-branchAndBoundSolve x@Problem {problemType = LP, ..} = solveProblem x
+-- branchAndBoundSolve :: Problem -> Solution
+-- branchAndBoundSolve x@Problem {problemType = LP, ..} = solveProblem x
 
 -- for simple LP test
 
@@ -436,3 +436,5 @@ costVec :: Vector R
 costVec = c
 xTree :: BranchProblem
 xTree = branchAndCut obj oldTab intMask costVec
+main :: IO()
+main = print(xTree)
