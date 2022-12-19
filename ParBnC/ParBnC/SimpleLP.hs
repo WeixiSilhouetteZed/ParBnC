@@ -9,6 +9,7 @@ import Numeric.LinearProgramming
 import Numeric.IEEE ( IEEE(infinity) )
 import Data.List
 import Numeric.LinearAlgebra as LA
+import Control.Parallel(par, pseq)
 
 prob :: Optimization
 prob = Maximize [4, -3, 2, 0, 0]
@@ -74,8 +75,8 @@ costCheck Maximization = (> 0)
 costCheck Minimization = (< 0)
 
 boundCheck :: ObjectiveType -> (R -> Bool)
-boundCheck Maximization = (> 0)
-boundCheck Minimization = (< 0)
+boundCheck Maximization = (< 0)
+boundCheck Minimization = (> 0)
 
 isImprovable :: ObjectiveType -> LA.Matrix R -> Bool
 isImprovable obj tab = any (costCheck obj) $ LA.toList cost where 
@@ -207,19 +208,24 @@ simplexWithTab obj tab = (optVal, solution, lastTab) where
     optVal = if obj == Maximization then lastVal else (-lastVal)
 
 simplexWithMixedTab :: ObjectiveType -> LA.Matrix R -> (R, LA.Vector R, LA.Matrix R)
-simplexWithMixedTab obj tab = (lastVal, solution, phaseTwoTab) where
-    (phaseOneTab, oldCost, needed) = getPhaseOneTab tab
-    interTab
-        | needed = updateMixedTab phaseOneTab
-        | otherwise = phaseOneTab
-    (rowSize, colSize) = LA.size interTab
-    (constRows, _) = splitAt (rowSize - 1) $ LA.toRows interTab
+simplexWithMixedTab obj tab
+    | infeasible = (-infinity, getSolution interTab, interTab)
+    | otherwise  = (lastVal, solution, lastTab) where
+        (phaseOneTab, oldCost, needed) = getPhaseOneTab tab
+        interTab
+            | needed = updateMixedTab phaseOneTab
+            | otherwise = phaseOneTab
+        (rowSize, colSize) = LA.size interTab
+        lastPhaseOneVal = interTab ! (rowSize - 1) ! (colSize - 1)
+        infeasible = not $ isClose lastPhaseOneVal (0::R)
 
-    phaseTwoTab = LA.fromRows $ constRows ++ [oldCost]
-    lastTab = updateTab obj phaseTwoTab
-    solution = getSolution lastTab
-    lastVal = lastTab ! (rowSize - 1) ! (colSize - 1)
-    optVal = lastVal
+        (constRows, _) = splitAt (rowSize - 1) $ LA.toRows interTab
+
+        phaseTwoTab = LA.fromRows $ constRows ++ [oldCost]
+        lastTab = updateTab obj phaseTwoTab
+        solution = getSolution lastTab
+        lastVal = lastTab ! (rowSize - 1) ! (colSize - 1)
+        optVal = lastVal
 
 b :: Vector R
 b = LA.fromList [5,28::R]
@@ -278,6 +284,10 @@ performGomoryCut obj tab varIdx = (newVal, newSol, newTab) where
     lastVal = newTab ! (rowSize - 1) ! (colSize - 1)
     newVal = if obj == Maximization then lastVal else (-lastVal)
 
+isClose :: R -> R -> Bool
+isClose x y = diff < epsilonTol where
+    diff = abs $ x - y
+
 roundSolution :: R -> R
 roundSolution num
     | diff < epsilonTol = roundCand
@@ -315,19 +325,34 @@ getBranches tab solVec branchIdx = (leftTab, rightTab) where
 data Tree a = Nil | Node a (Tree a) (Tree a) deriving (Show)
 
 data BranchProblem = BranchProblem {
-    -- tableau :: Matrix R,
+    tableau :: Matrix R,
     solution :: Vector R,
     value :: R
 } deriving (Show)
 
+
+-- constructBranchAndBoundQueue :: ObjectiveType -> Vector Bool -> Vector R -> R -> [BranchProblem] -> [BranchProblem]
+-- constructBranchAndBoundQueue obj intMask costVec bestVal [] = []
+-- constructBranchAndBoundQueue obj intMask costVec bestVal (bp@BranchProblem{..}:bpRest)
+--     | (and $ integerSolved intList currList) && (bestVal < candVal)
+--     tab = tableau
+--     (y, currSol, newTab) = simplexWithMixedTab obj tab
+--     candVal = costVec <.> LA.subVector 0 (LA.size costVec) currSol
+--     intList = LA.toList intMask 
+--     currList = LA.toList currSol
+
+-- constructBranchAndBoundBFS :: ObjectiveType -> LA.Matrix R -> LA.Vector Bool -> LA.Vector R -> R -> 
+
 constructBranchAndBound :: ObjectiveType -> Matrix R -> Vector Bool -> Vector R -> Tree BranchProblem
 constructBranchAndBound obj tab intMask costVec
+    | infeasible = Nil
     | and $ integerSolved intList currList = currProb Nil Nil
     | otherwise = currProb leftTree rightTree where
         (y, currSol, newTab) = simplexWithMixedTab obj tab
+        infeasible = y == (-infinity)
         candVal = costVec <.> LA.subVector 0 (LA.size costVec) currSol 
         currProb = Node BranchProblem {
-           solution = currSol, value = candVal
+           tableau = tab, solution = currSol, value = candVal
         }
         intList = LA.toList intMask 
         currList = LA.toList currSol
@@ -337,33 +362,77 @@ constructBranchAndBound obj tab intMask costVec
         leftTree = constructBranchAndBound obj leftTab intMask costVec
         rightTree = constructBranchAndBound obj rightTab intMask costVec
 
--- searchBBTree :: Tree BranchProblem -> BranchProblem
--- searchBBTree 
+constructBranchAndCut :: ObjectiveType -> Matrix R -> Vector Bool -> Vector R -> Tree BranchProblem
+constructBranchAndCut obj tab intMask costVec
+    | infeasible = Nil
+    | and $ integerSolved intList currList = currProb Nil Nil
+    | otherwise = currProb leftTree rightTree where
+        (y, currSol, newTab) = simplexWithMixedTab obj tab
+        infeasible = y == (-infinity)
+        candVal = costVec <.> LA.subVector 0 (LA.size costVec) currSol 
+        currProb = Node BranchProblem {
+           tableau = tab, solution = currSol, value = candVal
+        }
+        intList = LA.toList intMask 
+        currList = map roundSolution $ LA.toList currSol
+        solMask =  map (isInt . roundSolution) $ LA.toList currSol
+        nextIdx = findNonIntIndex intList solMask
+        cutTab = addGomoryCut tab $ getGomoryCut $ newTab ! nextIdx
+        (leftTab, rightTab) = getBranches cutTab currSol nextIdx
+        leftTree = constructBranchAndCut obj leftTab intMask costVec
+        rightTree = constructBranchAndCut obj rightTab intMask costVec
 
-fromProblem :: Problem -> (ObjectiveType, LA.Vector R, LA.Matrix R, LA.Vector R, LA.Vector Bool)
-fromProblem x@Problem {objective = Maximize costs, ..} = (obj, costC, matA, constB, continuousMask) where 
-    obj = Maximization
-    MatVec matALists consts = constraints
-    matA = LA.fromLists matALists
-    constB = LA.fromList consts
-    costC = LA.fromList costs 
-    continuousMask = LA.fromList $ map (==CONTINUOUS) variableTypes
-fromProblem x@Problem {objective = Minimize costs, ..} = (obj, costC, matA, constB, continuousMask) where 
-    obj = Minimization
-    MatVec matALists consts = constraints
-    matA = LA.fromLists matALists
-    constB = LA.fromList consts
-    costC = LA.fromList costs 
-    continuousMask = LA.fromList $ map (==CONTINUOUS) variableTypes
+searchBBTreeMax :: Tree BranchProblem -> BranchProblem
+searchBBTreeMax Nil = BranchProblem{tableau = LA.fromLists [[]], solution = LA.fromList [], value = -infinity}
+searchBBTreeMax (Node bp Nil Nil) = bp
+searchBBTreeMax (Node bp leftBpNode rightBpNode)
+    | leftBpVal > rightBpVal = leftBp
+    | otherwise = rightBp where
+        leftBp = searchBBTreeMax leftBpNode
+        rightBp = searchBBTreeMax rightBpNode
+        midBpVal = value bp
+        leftBpVal = value leftBp
+        rightBpVal = value rightBp
 
-problemTest :: Problem
-problemTest = Problem { 
-    problemType = LP,
-    variables = [" "],
-    objective = Maximize [4, -3, 2, 0, 0],
-    constraints = MatVec [[2,1,0,1,0],[0,1,5,0,1]] [10,20],
-    lowerBounds = [0,0,0,0,0],
-    upperBounds = [100,100,100,100,100],
-    variableTypes = [CONTINUOUS| _ <- [0..5]]
-}
 
+branchAndBound :: ObjectiveType -> Matrix R -> Vector Bool -> Vector R -> BranchProblem
+branchAndBound obj tab intMask costVec = searchBBTreeMax $ constructBranchAndBound obj tab intMask costVec
+
+branchAndCut :: ObjectiveType -> Matrix R -> Vector Bool -> Vector R -> BranchProblem
+branchAndCut obj tab intMask costVec = searchBBTreeMax $ constructBranchAndCut obj tab intMask costVec
+
+
+-- fromProblem :: Problem -> (ObjectiveType, LA.Vector R, LA.Matrix R, LA.Vector R, LA.Vector Bool)
+-- fromProblem x@Problem {objective = Maximize costs, ..} = (obj, costC, matA, constB, continuousMask) where 
+--     obj = Maximization
+--     MatVec matALists consts = constraints
+--     matA = LA.fromLists matALists
+--     constB = LA.fromList consts
+--     costC = LA.fromList costs 
+--     continuousMask = LA.fromList $ map (==CONTINUOUS) variableTypes
+-- fromProblem x@Problem {objective = Minimize costs, ..} = (obj, costC, matA, constB, continuousMask) where 
+--     obj = Minimization
+--     MatVec matALists consts = constraints
+--     matA = LA.fromLists matALists
+--     constB = LA.fromList consts
+--     costC = LA.fromList costs 
+--     continuousMask = LA.fromList $ map (==CONTINUOUS) variableTypes
+
+-- problemTest :: Problem
+-- problemTest = Problem { 
+--     problemType = LP,
+--     variables = [" "],
+--     objective = Maximize [4, -3, 2, 0, 0],
+--     constraints = MatVec [[2,1,0,1,0],[0,1,5,0,1]] [10,20],
+--     lowerBounds = [0,0,0,0,0],
+--     upperBounds = [100,100,100,100,100],
+--     variableTypes = [CONTINUOUS| _ <- [0..5]]
+-- }
+obj :: ObjectiveType
+obj = Maximization
+intMask :: Vector Bool
+intMask = LA.fromList [True, True]
+costVec :: Vector R
+costVec = c
+xTree :: BranchProblem
+xTree = branchAndCut obj oldTab intMask costVec
