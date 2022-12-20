@@ -5,6 +5,7 @@ import Numeric.LinearAlgebra as LA
 import Control.Parallel(par, pseq)
 import Control.Parallel.Strategies
 import Control.Monad ( when )
+import Control.DeepSeq
 
 data MatConstraints = MatVec [[Double]] [Double] deriving Show
 
@@ -318,6 +319,9 @@ getBranches tab solVec branchIdx = (leftTab, rightTab) where
     rightTab = addNewRow slackTab rightRow
 
 data Tree a = Nil | Node a (Tree a) (Tree a) deriving (Show)
+instance NFData a => NFData (Tree a) where
+    rnf Nil = ()
+    rnf (Node l a r) = rnf l `seq` rnf a `seq` rnf r
 
 data BranchProblem = BranchProblem {
     solution:: Vector R, value :: R
@@ -372,8 +376,8 @@ constructParBranchAndBound obj tab intMask costVec maxDepth
         nextIdx = findNonIntIndex intList solMask
         (leftTab, rightTab) = getBranches tab currSol nextIdx
         (leftTree, rightTree) = runEval $ do
-            leftTree <- rpar $ constructParBranchAndBound obj leftTab intMask costVec (maxDepth - 1)
-            rightTree <- rpar $ constructParBranchAndBound obj rightTab intMask costVec (maxDepth - 1)
+            leftTree <- rpar $ force constructBranchAndBound obj leftTab intMask costVec (maxDepth - 1)
+            rightTree <- rpar $ force constructBranchAndBound obj rightTab intMask costVec (maxDepth - 1)
             _ <- rseq leftTree
             _ <- rseq rightTree
             return (leftTree, rightTree)
@@ -416,8 +420,8 @@ constructParBranchAndCut obj tab intMask costVec maxDepth
         cutTab = addGomoryCut tab $ getGomoryCut $ newTab ! nextIdx
         (leftTab, rightTab) = getBranches cutTab currSol nextIdx
         (leftTree, rightTree) = runEval $ do
-            leftTree <- rpar $ constructBranchAndCut obj leftTab intMask costVec (maxDepth - 1)
-            rightTree <- rpar $ constructBranchAndCut obj rightTab intMask costVec (maxDepth - 1)
+            rightTree <- rpar $ force constructParBranchAndCut obj rightTab intMask costVec (maxDepth - 1)
+            leftTree <- rpar $ force constructParBranchAndCut obj leftTab intMask costVec (maxDepth - 1)
             _ <- rseq leftTree
             _ <- rseq rightTree
             return (leftTree, rightTree)
@@ -819,7 +823,7 @@ testTab = addSlackMatrix $ toTableau testC testMat testB
 testIntMask :: LA.Vector Bool
 testIntMask = LA.fromList $ replicate 35 True
 
-xTree :: Tree BranchProblem
-xTree = constructParBranchAndCut obj testTab testIntMask testC 13
+finalResult :: BranchProblem
+finalResult = searchBBTreeMax (constructParBranchAndBound obj testTab testIntMask testC 12) testIntMask
 main :: IO()
-main = print xTree
+main = print finalResult
