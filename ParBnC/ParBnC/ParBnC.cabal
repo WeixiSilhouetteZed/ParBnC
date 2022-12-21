@@ -1,17 +1,17 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.35.0.
+-- This file has been generated from package.yaml by hpack version 0.35.1.
 --
 -- see: https://github.com/sol/hpack
 
 name:           ParBnC
 version:        0.1.0.0
-description:    Please see the README on GitHub at <https://github.com/githubuser/ParBnC#readme>
-homepage:       https://github.com/githubuser/ParBnC#readme
-bug-reports:    https://github.com/githubuser/ParBnC/issues
-author:         Author name here
-maintainer:     example@example.com
-copyright:      2022 Author name here
+description:    Please see the README on GitHub at <https://github.com/WeixiSilhouetteZed/ParBnC#readme>
+homepage:       https://github.com/WeixiSilhouetteZed/ParBnC#readme
+bug-reports:    https://github.com/WeixiSilhouetteZed/ParBnC/issues
+author:         Weixi (Bill) Zhuo
+maintainer:     wz2603@columbia.edu
+copyright:      2022 Weixi (Bill) Zhuo
 license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
@@ -21,30 +21,45 @@ extra-source-files:
 
 source-repository head
   type: git
-  location: https://github.com/githubuser/ParBnC
+  location: https://github.com/WeixiSilhouetteZed/ParBnC
 
 library
   exposed-modules:
-      Lib
+      ParBnC
   other-modules:
       Paths_ParBnC
   hs-source-dirs:
       src
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints
   build-depends:
-      base >=4.7 && <5
+      aeson
+    , base >=4.7 && <5
+    , bytestring
+    , deepseq
+    , hmatrix
+    , ieee754
+    , parallel
+    , text
   default-language: Haskell2010
 
 executable ParBnC-exe
   main-is: Main.hs
   other-modules:
+      ParBnC
       Paths_ParBnC
   hs-source-dirs:
       app
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       ParBnC
+    , aeson
     , base >=4.7 && <5
+    , bytestring
+    , deepseq
+    , hmatrix
+    , ieee754
+    , parallel
+    , text
   default-language: Haskell2010
 
 test-suite ParBnC-test
@@ -57,5 +72,12 @@ test-suite ParBnC-test
   ghc-options: -Wall -Wcompat -Widentities -Wincomplete-record-updates -Wincomplete-uni-patterns -Wmissing-export-lists -Wmissing-home-modules -Wpartial-fields -Wredundant-constraints -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       ParBnC
+    , aeson
     , base >=4.7 && <5
+    , bytestring
+    , deepseq
+    , hmatrix
+    , ieee754
+    , parallel
+    , text
   default-language: Haskell2010
